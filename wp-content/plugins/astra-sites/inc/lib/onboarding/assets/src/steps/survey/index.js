@@ -207,7 +207,7 @@ const Survey = () => {
 
 	const hasAgreedFirstTime = allowResetSite || firstImportStatus;
 
-	const handleSurveyFormSubmit = ( e ) => {
+	const handleSurveyFormSubmit = ( e, skipSubscription = false ) => {
 		e.preventDefault();
 
 		if ( hasAgreedFirstTime ) {
@@ -241,6 +241,11 @@ const Survey = () => {
 							starterTemplates.analytics = answer;
 						}
 					} );
+			}
+
+			// Skip subscription if chose to skip and start building.
+			if ( skipSubscription ) {
+				return;
 			}
 
 			if ( astraSitesVars?.subscribed === 'yes' ) {
@@ -350,6 +355,14 @@ const Survey = () => {
 						? ICONS.arrowRightDisabled
 						: ICONS.arrowRight }
 				</button>
+
+				<button
+					className="p-2 bg-transparent border-none text-classic-button flex justify-self-center text-sm cursor-pointer"
+					onClick={ ( e ) => handleSurveyFormSubmit( e, true ) }
+				>
+					{ __( 'Skip & Start Building', 'astra-sites' ) }
+				</button>
+
 				<p className="!text-zip-app-inactive-icon subscription-agreement-text text-center mt-4">
 					{ beforeTerms }
 					{ terms }

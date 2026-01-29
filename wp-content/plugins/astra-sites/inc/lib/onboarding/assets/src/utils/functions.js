@@ -59,6 +59,10 @@ export const getDataUri = ( url, callback ) => {
 };
 
 export const storeCurrentState = ( currentState ) => {
+	// Remove allSitesData from currentState before storing to localStorage to reduce storage usage.
+	// if ( currentState && currentState.allSitesData ) {
+		// delete currentState.allSitesData;
+	// }
 	try {
 		localStorage.setItem(
 			'starter-templates-onboarding',

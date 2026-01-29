@@ -16,6 +16,12 @@ const isEligibleForSubmenu = (el) => {
 	}
 
 	if (el.className.includes('ct-mega-menu')) {
+		// If not custom width, it should not apply data-submenu attribute
+		// at all.
+		if (!el.classList.contains('ct-mega-menu-custom-width')) {
+			return false
+		}
+
 		// Don't treat centered custom width mega menus as regular sub-menus.
 		if (isMegaMenuCustomWidthCentered(el)) {
 			return false

@@ -18,6 +18,7 @@ import {
 	divideIntoChunks,
 	checkRequiredPlugins,
 	generateAnalyticsLead,
+	getDemo,
 } from './import-utils';
 const { reportError } = starterTemplates;
 const successMessageDelay = 8000; // 8 seconds delay for fully assets load.
@@ -159,6 +160,9 @@ const ImportSite = () => {
 		let formsStatus = false;
 		let customizerStatus = false;
 		let spectraStatus = false;
+
+		// To make sure template data is available before import.
+		await getDemo( templateResponse.id, storedState );
 
 		resetStatus = await resetOldSite();
 

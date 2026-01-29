@@ -312,6 +312,7 @@ const SiteList = () => {
 
 			const syncUptoDate = await isSyncUptoDate();
 			if ( syncUptoDate ) {
+				// Even if sync is up-to-date, preserve existing allSitesData and update bgSyncInProgress
 				dispatch( {
 					type: 'set',
 					bgSyncInProgress: false,
@@ -323,14 +324,19 @@ const SiteList = () => {
 			const categories = await SyncAndGetAllCategories();
 			const categoriesAndTags = await SyncAndGetAllCategoriesAndTags();
 
-			dispatch( {
-				type: 'set',
+			// Only update state if we have valid data
+			const updatePayload = {
 				bgSyncInProgress: false,
 				syncPageInProgress: 0,
 				syncPageCount: 0,
 				allSitesData: sites ?? null,
 				categories: categories ?? null,
-				categoriesAndTags: categoriesAndTags ?? null,
+				categoriesAndTags: categoriesAndTags,
+			};
+
+			dispatch( {
+				type: 'set',
+				...updatePayload,
 			} );
 
 			astraSitesVars.bgSyncInProgress = false;
