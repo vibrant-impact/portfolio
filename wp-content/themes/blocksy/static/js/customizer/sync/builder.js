@@ -2,7 +2,7 @@ import ctEvents from 'ct-events'
 import {
 	updateVariableInStyleTags,
 	clearAstCache,
-} from 'customizer-sync-helpers'
+} from '@creative-themes/customizer-sync-helpers'
 import { getValueFromInput } from '../../options/helpers/get-value-from-input'
 import $ from 'jquery'
 import { __ } from 'ct-i18n'
@@ -291,6 +291,30 @@ wp.customize.bind('preview-ready', () => {
 			} else {
 				$(placement.container).addClass('customize-partial-refreshing')
 			}
+		}
+
+	const originalRenderContent =
+		wp.customize.selectiveRefresh.Partial.prototype.renderContent
+
+	wp.customize.selectiveRefresh.Partial.prototype.renderContent =
+		function (placement) {
+			if (
+				!placement.addedContent ||
+				!_.isString(placement.addedContent)
+			) {
+				return originalRenderContent.call(this, placement)
+			}
+
+			ctFrontend
+				.preloadAssetsForContent(placement.addedContent)
+				.then(() => {
+					originalRenderContent.call(this, placement)
+				})
+
+			// Return value is not used by WP core (see
+			// customize-selective-refresh.js#381), but we return false to
+			// make it explicit that rendering is deferred.
+			return false
 		}
 
 	wp.customize.selectiveRefresh.Partial.prototype.createEditShortcutForPlacement =

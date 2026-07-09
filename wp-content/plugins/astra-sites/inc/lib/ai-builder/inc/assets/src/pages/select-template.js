@@ -16,8 +16,10 @@ import { STORE_KEY } from '../store';
 import { ColumnItem } from '../components/column-item';
 import Input from '../components/input';
 import {
+	ArrowsRightLeftIcon,
 	ChevronUpIcon,
 	MagnifyingGlassIcon,
+	SwatchIcon,
 	XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { useForm } from 'react-hook-form';
@@ -34,8 +36,10 @@ import LoadingSpinner from '../components/loading-spinner';
 import { __ } from '@wordpress/i18n';
 import toast from 'react-hot-toast';
 import Heading from '../components/heading';
-import { SelectTemplatePageBuilderDropdown } from '../components/page-builder-dropdown';
+import { getBuildersList } from '../components/page-builder-dropdown';
 import { debounce } from 'lodash';
+import SortByDropdown from '../components/sort-by-dropdown';
+import Tooltip from '../components/tooltip';
 export const USER_KEYWORD = 'st-template-search';
 export const getRandomUniqueId = () =>
 	Math.random().toString( 16 ).substring( 3 );
@@ -109,6 +113,14 @@ const SelectTemplate = () => {
 	const [ backToTop, setBackToTop ] = useState( false );
 	const [ selectedBuilder, setSelectedBuilder ] =
 		useState( defaultPageBuilder );
+
+	const [ sortBy, setSortBy ] = useState( 'most-used' );
+	const [ shuffleCount, setShuffleCount ] = useState( 0 );
+	const handleShuffleColors = () => setShuffleCount( ( prev ) => prev + 1 );
+	const buildersList = getBuildersList();
+	const isDefaultSort = sortBy === 'most-used';
+	const buildSortPayload = () =>
+		isDefaultSort ? {} : { sort: { by: sortBy, order: 'desc' } };
 
 	useEffect( () => {
 		setSelectedPageBuilder(
@@ -297,19 +309,36 @@ const SelectTemplate = () => {
 			const abortController = new AbortController();
 			abortRequest.current.push( abortController );
 
-			// Send all keywords in a single request
-			const response = await apiFetch( {
-				path: 'zipwp/v1/templates',
-				method: 'POST',
-				data: {
-					keywords: finalKeywords, // Send array of keywords
-					business_name: businessName,
-					page_builder: _selectedBuilder,
-				},
-				signal: abortController.signal,
-			} );
-
-			let result = response?.data?.data || [];
+			// Use search endpoint for default sort, all-templates for active sort
+			let result = [];
+			if ( isDefaultSort ) {
+				const response = await apiFetch( {
+					path: 'zipwp/v1/templates',
+					method: 'POST',
+					data: {
+						keywords: finalKeywords,
+						business_name: businessName,
+						page_builder: _selectedBuilder,
+					},
+					signal: abortController.signal,
+				} );
+				result = response?.data?.data || [];
+			} else {
+				const response = await apiFetch( {
+					path: 'zipwp/v1/all-templates',
+					method: 'POST',
+					data: {
+						business_name: businessName,
+						page_builder: _selectedBuilder,
+						keyword,
+						per_page: 20,
+						page: 0,
+						...buildSortPayload(),
+					},
+					signal: abortController.signal,
+				} );
+				result = response?.data?.data?.result || [];
+			}
 
 			// Filter out Hidden templates based on the settings.
 			result = handleHiddenTemplates( result );
@@ -371,11 +400,11 @@ const SelectTemplate = () => {
 				};
 			} );
 
-			if ( allTemplatesList.length < 4 ) {
+			if ( isDefaultSort && allTemplatesList.length < 4 ) {
 				fetchAllTemplatesByPage( 1, {
 					searchResults: results,
 					templateList: allTemplatesList,
-					showLoadMoreTemplates: loadMoreTemplates.showLoadMore,
+					showLoadMoreTemplates,
 				} );
 			}
 		} catch ( error ) {
@@ -409,6 +438,10 @@ const SelectTemplate = () => {
 					page_builder: selectedBuilder,
 					per_page: 9,
 					page,
+					...( ! isDefaultSort && {
+						keyword: debouncedKeyword || getInitialUserKeyword(),
+					} ),
+					...buildSortPayload(),
 				},
 			} );
 
@@ -573,7 +606,7 @@ const SelectTemplate = () => {
 
 	useEffect( () => {
 		fetchNewTemplates( false );
-	}, [ debouncedKeyword ] );
+	}, [ debouncedKeyword, sortBy ] );
 
 	useEffect( () => {
 		// if there's a uuid in the query params, find the template
@@ -622,7 +655,19 @@ const SelectTemplate = () => {
 			! partialTemplates?.length &&
 			! genericTemplates?.length
 		) {
-			return null;
+			return (
+				<div className="col-span-full flex flex-col items-center justify-center py-16">
+					<div className="text-base font-semibold text-app-heading">
+						{ __( 'No templates found', 'ai-builder' ) }
+					</div>
+					<div className="text-sm mt-2 text-zip-body-text">
+						{ __(
+							'Try changing your search keyword or sort options.',
+							'ai-builder'
+						) }
+					</div>
+				</div>
+			);
 		}
 
 		const recommendedTemplateIdSet = new Set(
@@ -649,6 +694,7 @@ const SelectTemplate = () => {
 						shouldLoad={ designToLoadList.includes(
 							template.uniqueId
 						) }
+						shuffleCount={ shuffleCount }
 					/>
 				) ) }
 				{ partialTemplates?.map( ( template, index ) => (
@@ -662,6 +708,7 @@ const SelectTemplate = () => {
 						shouldLoad={ designToLoadList.includes(
 							template.uniqueId
 						) }
+						shuffleCount={ shuffleCount }
 					/>
 				) ) }
 				{ filteredGenericTemplates?.map( ( template, index ) => (
@@ -678,11 +725,12 @@ const SelectTemplate = () => {
 						shouldLoad={ designToLoadList.includes(
 							template.uniqueId
 						) }
+						shuffleCount={ shuffleCount }
 					/>
 				) ) }
 			</>
 		);
-	}, [ getTemplates, designToLoadList ] );
+	}, [ getTemplates, designToLoadList, shuffleCount ] );
 
 	const handleClickBackToTop = () => {
 		parentContainer.current.scrollTo( {
@@ -773,28 +821,14 @@ const SelectTemplate = () => {
 				className="w-full px-5 md:px-10 lg:px-14 xl:px-15 pt-12 max-w-fit mx-auto text-[28px] font-semibold leading-9"
 			/>
 			<form
-				className="w-full pt-4 pb-4  max-w-[37.5rem] mx-auto"
+				className="w-full pt-4 pb-4 max-w-[37.5rem] mx-auto"
 				onSubmit={ handleSubmit( handleSubmitKeyword ) }
 			>
 				<div
 					className={ classNames(
-						'flex w-full bg-white gap-2 items-center rounded-md shadow-sm border border-border-tertiary flex-col-reverse md:flex-row'
+						'flex w-full bg-white items-center rounded-md shadow-sm border border-border-tertiary'
 					) }
 				>
-					<SelectTemplatePageBuilderDropdown
-						selectedBuilder={ selectedBuilder }
-						onChange={ ( builder ) => {
-							setSelectedBuilder( builder.id );
-							fetchTemplates(
-								watchedKeyword
-									? watchedKeyword
-									: getInitialUserKeyword(),
-								true,
-								builder.id
-							);
-						} }
-					/>
-					<span className="hidden xs:block h-6 w-px bg-gray-900/10"></span>
 					<Input
 						name="keyword"
 						inputClassName={ 'pr-11 pl-2 !text-base' }
@@ -804,6 +838,9 @@ const SelectTemplate = () => {
 						className="w-full h-12"
 						noBorder={ true }
 						error={ errors?.keyword }
+						prefixIcon={
+							<MagnifyingGlassIcon className="w-5 h-5 text-zip-app-inactive-icon ml-4 shrink-0" />
+						}
 						suffixIcon={
 							<div className="absolute right-4 flex items-center">
 								<button
@@ -813,15 +850,69 @@ const SelectTemplate = () => {
 								>
 									{ watchedKeyword ? (
 										<XMarkIcon className="w-5 h-5 text-zip-app-inactive-icon" />
-									) : (
-										<MagnifyingGlassIcon className="w-5 h-5 text-zip-app-inactive-icon" />
-									) }
+									) : null }
 								</button>
 							</div>
 						}
 					/>
 				</div>
 			</form>
+
+			<div className="flex items-center justify-between flex-wrap gap-2.5 md:flex-nowrap md:gap-0 px-5 md:px-10 lg:px-14 xl:px-15 mt-2">
+				{ /* Page builder pills */ }
+				<div className="flex items-center gap-1 p-2 rounded-md bg-white">
+					{ buildersList.map( ( builder ) => (
+						<button
+							key={ builder.id }
+							type="button"
+							className={ classNames(
+								'flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm cursor-pointer border-0 transition-all duration-200',
+								selectedBuilder === builder.id
+									? 'bg-[#F2F4F7] font-semibold text-heading-text'
+									: 'bg-transparent font-normal text-zip-body-text hover:text-heading-text'
+							) }
+							onClick={ () => {
+								setSelectedBuilder( builder.id );
+								fetchTemplates(
+									watchedKeyword
+										? watchedKeyword
+										: getInitialUserKeyword(),
+									true,
+									builder.id
+								);
+							} }
+						>
+							<img
+								className="w-5 h-5"
+								src={ builder.image }
+								alt={ builder.title }
+							/>
+							{ builder.title }
+						</button>
+					) ) }
+				</div>
+
+				{ /* Sort + Shuffle */ }
+				<div className="flex items-center gap-3">
+					<SortByDropdown
+						value={ sortBy }
+						onChange={ ( option ) => setSortBy( option.id ) }
+					/>
+					<Tooltip
+						content={ __( 'Shuffle Colors', 'ai-builder' ) }
+						placement="top"
+					>
+						<button
+							type="button"
+							className="flex items-center justify-center gap-2 h-10 px-3 rounded-lg border border-solid border-border-tertiary bg-white text-heading-text hover:bg-[#F4F7FB] cursor-pointer transition-colors duration-200"
+							onClick={ handleShuffleColors }
+						>
+							<SwatchIcon className="w-5 h-5" />
+							<ArrowsRightLeftIcon className="w-5 h-5" />
+						</button>
+					</Tooltip>
+				</div>
+			</div>
 
 			<div
 				ref={ templatesContainer }
@@ -835,7 +926,7 @@ const SelectTemplate = () => {
 				<div
 					ref={ templatesContainer }
 					className={ classNames(
-						'grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-auto items-start justify-center gap-4 sm:gap-6 mb-10 mt-5'
+						'grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 auto-rows-auto items-start justify-center gap-4 sm:gap-6 mb-10 mt-5'
 					) }
 				>
 					{ ! isFetching

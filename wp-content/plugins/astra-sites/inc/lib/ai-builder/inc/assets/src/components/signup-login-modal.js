@@ -1,8 +1,11 @@
+import { useEffect, useCallback, useRef, useState } from '@wordpress/element';
 import { useSelect, useDispatch } from '@wordpress/data';
 import { __ } from '@wordpress/i18n';
 import { STORE_KEY } from '../store';
 import Modal from './modal';
 import Button from './button';
+import LoadingSpinner from './loading-spinner';
+import { isValidAuthMessage, resolveAuthOrigin } from '../utils/auth-message';
 const { imageDir } = aiBuilderVars;
 import { CheckIcon } from '@heroicons/react/24/outline';
 
@@ -17,13 +20,91 @@ const SignupLoginModal = () => {
 	const { zipwp_auth } = wpApiSettings || {};
 	const { screen_url, redirect_url, source, utmSource, partner_id } =
 		zipwp_auth || {};
-	const { isPremiumTemplate } = signupLoginModal || {};
+	const { isPremiumTemplate, onAuthSuccess } = signupLoginModal || {};
+
+	const [ isAuthLoading, setIsAuthLoading ] = useState( false );
+	const authChildWindow = useRef( null );
+	const onAuthSuccessRef = useRef( onAuthSuccess );
+
+	// Resolve the expected ZipWP auth origin once. Used to reject cross-origin
+	// postMessage events that would otherwise be able to spoof auth success.
+	const expectedAuthOrigin = resolveAuthOrigin( screen_url );
+
+	// Keep callback ref in sync so the message handler always has the latest.
+	useEffect( () => {
+		onAuthSuccessRef.current = onAuthSuccess;
+	}, [ onAuthSuccess ] );
 
 	const encodedRedirectUrl = encodeURIComponent(
 		redirect_url +
 			'&should_resume=1&security=' +
 			aiBuilderVars.zipwp_auth_nonce
 	);
+
+	const saveAuthToken = useCallback(
+		async ( { token, creditToken, email } ) => {
+			const formData = new FormData();
+			formData.append( 'action', 'astra-sites-save_auth_token' );
+			formData.append( '_ajax_nonce', aiBuilderVars._ajax_nonce );
+			formData.append( 'token', token );
+			formData.append( 'credit_token', creditToken );
+			formData.append( 'email', email );
+
+			const response = await fetch( aiBuilderVars.ajax_url, {
+				method: 'POST',
+				body: formData,
+				credentials: 'same-origin',
+			} );
+
+			return response.json();
+		},
+		[]
+	);
+
+	// Listen for ZIPWP_AUTH_SUCCESS postMessage from the popup window.
+	useEffect( () => {
+		const handleMessage = async ( event ) => {
+			// Reject messages from any origin other than the ZipWP auth origin
+			// and from any source other than the popup this component opened.
+			// Prevents CSRF via forged postMessage from attacker-controlled pages.
+			if (
+				! isValidAuthMessage(
+					event,
+					expectedAuthOrigin,
+					authChildWindow.current
+				)
+			) {
+				return;
+			}
+
+			const { token, credit_token: creditToken, email } = event.data;
+
+			// Save tokens to the WordPress database.
+			const result = await saveAuthToken( {
+				token,
+				creditToken,
+				email,
+			} );
+
+			if ( result?.success ) {
+				aiBuilderVars.zip_token_exists = true;
+
+				if ( result.data?.zip_plans ) {
+					aiBuilderVars.zip_plans = result.data.zip_plans;
+				}
+
+				setIsAuthLoading( false );
+				setSignupLoginModal( { open: false } );
+
+				if ( typeof onAuthSuccessRef.current === 'function' ) {
+					onAuthSuccessRef.current();
+				}
+			}
+		};
+
+		window.addEventListener( 'message', handleMessage );
+		return () => window.removeEventListener( 'message', handleMessage );
+	}, [ saveAuthToken, setSignupLoginModal, expectedAuthOrigin ] );
 
 	const handleClickNext = ( ask = 'register' ) => {
 		const currentUrl = window.location.href;
@@ -51,11 +132,33 @@ const SignupLoginModal = () => {
 			) }`;
 		}
 
-		window.location.href = url;
-		setSignupLoginModal( { open: false } );
+		// Append mode=popup so ZipWP sends postMessage instead of redirecting.
+		url += '&mode=popup';
+
+		// Open auth in a child browser window, centered on screen.
+		const width = 1280;
+		const height = 828;
+		const left = window.screenX + ( window.outerWidth - width ) / 2;
+		const top = window.screenY + ( window.outerHeight - height ) / 2;
+		const features = `width=${ width },height=${ height },left=${ left },top=${ top },scrollbars=yes,resizable=yes`;
+
+		const childWindow = window.open( url, 'zipwp-auth', features );
+
+		if ( childWindow ) {
+			authChildWindow.current = childWindow;
+			setIsAuthLoading( true );
+		} else {
+			// Popup blocked — fall back to redirect.
+			window.location.href = url.replace( '&mode=popup', '' );
+			setSignupLoginModal( { open: false } );
+		}
 	};
 
 	const handleCloseModal = () => {
+		if ( authChildWindow.current && ! authChildWindow.current.closed ) {
+			authChildWindow.current.close();
+		}
+		setIsAuthLoading( false );
 		setSignupLoginModal( { open: false } );
 	};
 
@@ -144,18 +247,29 @@ const SignupLoginModal = () => {
 							variant="primary"
 							size="medium"
 							className="min-w-full h-[40px] text-sm font-semibold leading-5 px-5 w-full xs:w-auto"
+							disabled={ isAuthLoading }
 							onClick={ () => {
 								handleClickNext( 'register' );
 							} }
 						>
-							{ __( 'Create ZipWP Account', 'ai-builder' ) }
+							{ isAuthLoading ? (
+								<LoadingSpinner />
+							) : (
+								__( 'Create ZipWP Account', 'ai-builder' )
+							) }
 						</Button>
 						<span className="text-sm">
 							{ __( 'Already have an account?', 'ai-builder' ) }{ ' ' }
 							<span
-								className="text-accent-st cursor-pointer hover:underline"
+								className={ `text-accent-st ${
+									isAuthLoading
+										? 'pointer-events-none opacity-50'
+										: 'cursor-pointer hover:underline'
+								}` }
 								onClick={ () => {
-									handleClickNext( 'login' );
+									if ( ! isAuthLoading ) {
+										handleClickNext( 'login' );
+									}
 								} }
 							>
 								{ ' ' }
